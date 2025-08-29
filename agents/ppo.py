@@ -1,5 +1,6 @@
 from typing import Any
 from functools import partial
+
 import flax
 import jax
 import jax.numpy as jnp
@@ -21,8 +22,11 @@ class PPOAgent(flax.struct.PyTreeNode):
         """Compute the PPO loss."""
         dist = self.network.select('actor')(batch['observations'], params=grad_params)
         log_prob = dist.log_prob(batch['actions'])
+        # distrax's Transformed distributions (e.g., tanh-squashed Gaussians)
+        # do not always implement ``entropy`` because the bijector's Jacobian
+        # may be input-dependent. Instead, estimate the entropy via a
+        # reparameterized sample so gradients can still propagate.
         entropy = -dist.log_prob(dist.sample(seed=rng)).mean()
-
 
         value = self.network.select('value')(batch['observations'], params=grad_params)
         next_value = self.network.select('value')(batch['next_observations'], params=grad_params)
@@ -34,7 +38,12 @@ class PPOAgent(flax.struct.PyTreeNode):
             adv_std = jnp.std(advantage) + 1e-8
             advantage = (advantage - adv_mean) / adv_std
 
-        ratio = jnp.exp(log_prob - batch['log_probs'])
+        # If the batch does not contain behavior-policy log-probabilities
+        # (e.g., validation batches sampled from an offline dataset), fall back
+        # to the current policy's log-probs so the importance-sampling ratio
+        # becomes 1.0.
+        old_log_prob = batch.get('log_probs', log_prob)
+        ratio = jnp.exp(log_prob - old_log_prob)
         clipped_ratio = jnp.clip(ratio, 1.0 - self.config['clip_eps'], 1.0 + self.config['clip_eps'])
         actor_loss = -(jnp.minimum(ratio * advantage, clipped_ratio * advantage)).mean()
 
