@@ -71,7 +71,20 @@ def main(_):
 
     # Set up datasets.
     train_dataset = Dataset.create(**train_dataset)
-    if FLAGS.balanced_sampling:
+    example_batch = train_dataset.sample(1)
+    if config['agent_name'] == 'ppo':
+        example_transition = dict(
+            observations=example_batch['observations'][0],
+            actions=example_batch['actions'][0],
+            rewards=0.0,
+            terminals=0.0,
+            masks=1.0,
+            next_observations=example_batch['next_observations'][0],
+            log_probs=0.0,
+        )
+        replay_buffer = ReplayBuffer.create(example_transition, size=FLAGS.buffer_size)
+        train_dataset = None
+    elif FLAGS.balanced_sampling:
         # Create a separate replay buffer so that we can sample from both the training dataset and the replay buffer.
         example_transition = {k: v[0] for k, v in train_dataset.items()}
         replay_buffer = ReplayBuffer.create(example_transition, size=FLAGS.buffer_size)
@@ -90,7 +103,8 @@ def main(_):
                 dataset.return_next_actions = True
 
     # Create agent.
-    example_batch = train_dataset.sample(1)
+    if train_dataset is not None:
+        example_batch = train_dataset.sample(1)
 
     agent_class = agents[config['agent_name']]
     agent = agent_class.create(
@@ -131,8 +145,14 @@ def main(_):
                 step = 0
                 ob, _ = env.reset()
 
-            action = agent.sample_actions(observations=ob, temperature=1, seed=key)
-            action = np.array(action)
+            if config['agent_name'] == 'ppo':
+                action, log_prob = agent.sample_actions(
+                    observations=ob, temperature=1, seed=key, return_log_prob=True
+                )
+                action = np.array(action)
+            else:
+                action = agent.sample_actions(observations=ob, temperature=1, seed=key)
+                action = np.array(action)
 
             next_ob, reward, terminated, truncated, info = env.step(action.copy())
             done = terminated or truncated
@@ -143,16 +163,17 @@ def main(_):
                 # Adjust reward for D4RL antmaze.
                 reward = reward - 1.0
 
-            replay_buffer.add_transition(
-                dict(
-                    observations=ob,
-                    actions=action,
-                    rewards=reward,
-                    terminals=float(done),
-                    masks=1.0 - terminated,
-                    next_observations=next_ob,
-                )
+            transition = dict(
+                observations=ob,
+                actions=action,
+                rewards=reward,
+                terminals=float(done),
+                masks=1.0 - terminated,
+                next_observations=next_ob,
             )
+            if config['agent_name'] == 'ppo':
+                transition['log_probs'] = np.array(log_prob)
+            replay_buffer.add_transition(transition)
             ob = next_ob
 
             if done:
@@ -161,7 +182,9 @@ def main(_):
             step += 1
 
             # Update agent.
-            if FLAGS.balanced_sampling:
+            if config['agent_name'] == 'ppo':
+                batch = replay_buffer.sample(config['batch_size'])
+            elif FLAGS.balanced_sampling:
                 # Half-and-half sampling from the training dataset and the replay buffer.
                 dataset_batch = train_dataset.sample(config['batch_size'] // 2)
                 replay_batch = replay_buffer.sample(config['batch_size'] // 2)
