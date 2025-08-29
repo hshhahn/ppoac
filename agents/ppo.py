@@ -1,6 +1,7 @@
 from typing import Any
 from functools import partial
 
+
 import flax
 import jax
 import jax.numpy as jnp
