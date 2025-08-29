@@ -1,4 +1,6 @@
 from typing import Any
+from functools import partial
+
 
 import flax
 import jax
@@ -71,7 +73,7 @@ class PPOAgent(flax.struct.PyTreeNode):
         new_network, info = self.network.apply_loss_fn(loss_fn=loss_fn)
         return self.replace(network=new_network, rng=new_rng), info
 
-    @jax.jit
+    @partial(jax.jit, static_argnames=('return_log_prob',))
     def sample_actions(self, observations, seed=None, temperature=1.0, return_log_prob=False):
         dist = self.network.select('actor')(observations, temperature=temperature)
         if return_log_prob:
