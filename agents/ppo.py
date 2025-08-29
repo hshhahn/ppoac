@@ -1,7 +1,5 @@
 from typing import Any
-from functools import partial
-
-import flax
+from functools import partialimport flax
 import jax
 import jax.numpy as jnp
 import ml_collections
@@ -22,11 +20,8 @@ class PPOAgent(flax.struct.PyTreeNode):
         """Compute the PPO loss."""
         dist = self.network.select('actor')(batch['observations'], params=grad_params)
         log_prob = dist.log_prob(batch['actions'])
-        # distrax's Transformed distributions (e.g., tanh-squashed Gaussians)
-        # do not always implement ``entropy`` because the bijector's Jacobian
-        # may be input-dependent. Instead, estimate the entropy via a
-        # reparameterized sample so gradients can still propagate.
         entropy = -dist.log_prob(dist.sample(seed=rng)).mean()
+
 
         value = self.network.select('value')(batch['observations'], params=grad_params)
         next_value = self.network.select('value')(batch['next_observations'], params=grad_params)
